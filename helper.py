@@ -67,14 +67,16 @@ def maybe_download_pretrained_vgg(data_dir):
         # Remove zip file to save space
         os.remove(os.path.join(vgg_path, vgg_filename))
 
-
-def cut_hood(img, perc_retain=0.9):
+def remove_hood(seg_img, perc_retain=0.9, car_id=10):
     """
-    Cut the hood part of the car
-    :param img: The image
+    Remove the hood part of the car from the
+    segmentation image
+    :param seg_img: The segmentation image
     """
-    height = img.shape[0]
-    return img[0:int(height*perc_retain), :]
+    height = seg_img.shape[0]
+    seg_img[int(height*perc_retain):, :][
+      np.where(seg_img[int(height*perc_retain):, :] == car_id)] = 0
+    return seg_img
 
 def remap_seg(seg, seg_map):
     """
@@ -128,11 +130,10 @@ def gen_batch_function(data_folder, rgb_dir, seg_dir, image_shape):
             labels = []
             for i, rgb_file in enumerate(np.take(rgb_paths, random_ids[batch_i:batch_i+batch_size])):
                 seg_file = np.take(seg_paths, random_ids[batch_i+i])
-                rgb = cv2.resize(cut_hood(cv2.cvtColor(cv2.imread(rgb_file), cv2.COLOR_BGR2RGB),
-                                          perc_retain=AOI_PERC),
+                rgb = cv2.resize(cv2.cvtColor(cv2.imread(rgb_file), cv2.COLOR_BGR2RGB),
                                  (image_shape[1], image_shape[0]))
                 
-                seg = cv2.resize(cut_hood(cv2.imread(seg_file, cv2.IMREAD_COLOR)[:, :, 2],
+                seg = cv2.resize(remove_hood(cv2.imread(seg_file, cv2.IMREAD_COLOR)[:, :, 2],
                                           perc_retain=AOI_PERC),
                                  (image_shape[1], image_shape[0]),
                                  interpolation=cv2.INTER_NEAREST)
@@ -145,26 +146,17 @@ def gen_batch_function(data_folder, rgb_dir, seg_dir, image_shape):
     return get_batches_fn
 
 
-def reshape_to_ori(mask, ori_img_shape, perc_retain):
-    if len(mask.shape) == 3:
-        fin_mask = np.zeros((ori_img_shape[0], ori_img_shape[1], mask.shape[2]))
-    elif len(mask.shape) == 2:
-        fin_mask = np.zeros((ori_img_shape[0], ori_img_shape[1]))
-    scale_height = int(ori_img_shape[0] * perc_retain)
+def reshape_to_ori(mask, ori_img_shape):
+    scale_height = int(ori_img_shape[0])
     scale_width = int(ori_img_shape[1])
     print("mask shape before:", mask.shape)
     mask = np.array(mask, dtype=np.uint8)
     print("mask shape mid:", mask.shape)
     mask = cv2.resize(mask, (scale_width, scale_height), interpolation=cv2.INTER_NEAREST)
     print("mask shape after:", mask.shape)
+    return mask
 
-    if len(mask.shape) == 3:
-        fin_mask[0:mask.shape[0], 0:mask.shape[1], :] = mask
-    elif len(mask.shape) == 2:
-        fin_mask[0:mask.shape[0], 0:mask.shape[1]] = mask
-    return fin_mask
-
-def gen_test_output(sess, logits, keep_prob, image_pl, data_folder, image_shape, aoi_perc=AOI_PERC):
+def gen_test_output(sess, logits, keep_prob, image_pl, data_folder, image_shape):
     """
     Generate test output using the test images
     :param sess: TF session
@@ -177,8 +169,7 @@ def gen_test_output(sess, logits, keep_prob, image_pl, data_folder, image_shape,
     """
     for image_file in glob(os.path.join(data_folder, '*.png')):
         ori_img = cv2.cvtColor(cv2.imread(image_file), cv2.COLOR_BGR2RGB)
-        image = cv2.resize(cut_hood(ori_img, perc_retain=aoi_perc),
-                           (image_shape[1], image_shape[0]))
+        image = cv2.resize(ori_img, (image_shape[1], image_shape[0]))
 
         im_softmax = sess.run(
             [tf.nn.softmax(logits)],
@@ -194,7 +185,7 @@ def gen_test_output(sess, logits, keep_prob, image_pl, data_folder, image_shape,
         mask = np.dot(seg_road, np.array([[0, 255, 0, 127]])) + \
                np.dot(seg_vehicle, np.array([[255, 0, 0, 127]]))
         
-        mask = reshape_to_ori(mask, ori_img.shape, aoi_perc)
+        mask = reshape_to_ori(mask, ori_img.shape)
 
         mask = scipy.misc.toimage(mask, mode="RGBA")
         

@@ -144,7 +144,7 @@ def run():
     data_dir = TRAINING_DIR
     runs_dir = './runs'
     correct_label = tf.placeholder(tf.float32, shape=[None, image_shape[0], image_shape[1], num_classes])
-    epochs = 20
+    epochs = 100
     batch_size = 32
     learning_rate=1e-5
 
